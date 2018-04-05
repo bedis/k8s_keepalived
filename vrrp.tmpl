@@ -1,0 +1,38 @@
+# Check for the presence of the SSH daemon. That way, if SSH dies, we prefer
+# the other node which remains remotely manageable.
+vrrp_script chk_sshd {
+        script "pkill -0 sshd"          # pkill -0 is cheaper than pidof
+        interval 5                      # check every 5 seconds
+        weight -4                       # remove 4 points of prio if missing
+        fall 2                          # check twice before setting down
+        rise 1                          # check once before setting up
+}
+
+# Check for the presence of the load balancer daemon (hapee-lb) itself. The
+# weight is higher than for SSHD, because if one node only has SSHD and the
+# other one only has the LB running, we prefer the LB.
+vrrp_script chk_lb {
+        script "pkill -0 haproxy"       # pkill -0 is cheaper than pidof
+        interval 1                      # check every second
+        weight 6                        # add 6 points of prio if present
+        fall 2                          # check twice before setting down
+        rise 1                          # check once before setting up
+}
+
+vrrp_instance vrrp_1 {
+        interface eth0                  # or bond0 or whatever prod interface
+        state MASTER                    # try to be master without waiting
+        virtual_router_id 51            # use a distinct value for each instance
+        priority 101                    # 101 on master, 100 on backup
+        virtual_ipaddress_excluded {
+              {{range $i, $svc := .services}} {{ $svcName := $svc.Name }}{{$svc.LoadBalancerIP}}    # {{$svc.Name}}{{end}}
+        }
+        track_interface {
+                eth0 weight -2          # interfaces to monitor
+                # eth1 weight -2
+        }
+        track_script {
+                chk_sshd
+                chk_lb
+        }
+}
